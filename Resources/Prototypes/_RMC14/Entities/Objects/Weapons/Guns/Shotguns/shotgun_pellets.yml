@@ -36,7 +36,7 @@
     - range: 4
       falloff: 9999
       ignoreModifiers: true
-    - range: 0
+    - range: 4
       falloff: 1
   - type: RMCProjectileAccuracy
     thresholds:
@@ -63,7 +63,7 @@
     - range: 8
       falloff: 9999
       ignoreModifiers: true
-    - range: 0
+    - range: 8
       falloff: 1
   - type: CMArmorPiercing
     amount: 20
@@ -94,7 +94,7 @@
     - range: 12
       falloff: 9999
       ignoreModifiers: true
-    - range: 0
+    - range: 8
       falloff: 1
   - type: RMCProjectileAccuracy
     accuracy: 95
@@ -117,7 +117,7 @@
     - range: 12
       falloff: 9999
       ignoreModifiers: true
-    - range: 0
+    - range: 12
       falloff: 1
   - type: RMCStaminaDamageOnCollide
     damage: 45
@@ -149,7 +149,7 @@
     - range: 12
       falloff: 9999
       ignoreModifiers: true
-    - range: 0
+    - range: 12
       falloff: 1
 
 - type: entity
