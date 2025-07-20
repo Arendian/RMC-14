@@ -81,7 +81,7 @@ public sealed class XenoTumbleSystem : EntitySystem
         Dirty(xeno);
 
         _rmcObstacleSlamming.MakeImmune(xeno);
-        _throwing.TryThrow(xeno, diff, 30, animated: false, compensateFriction: true);
+        _throwing.TryThrow(xeno, diff, 30, animated: false);
         _audio.PlayPredicted(xeno.Comp.Sound, xeno, xeno);
     }
 

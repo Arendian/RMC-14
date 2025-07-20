@@ -83,7 +83,7 @@ public sealed class XenoHeadbuttSystem : EntitySystem
         Dirty(xeno);
 
         _rmcObstacleSlamming.MakeImmune(xeno);
-        _throwing.TryThrow(xeno, diff, compensateFriction: true);
+        _throwing.TryThrow(xeno, diff);
     }
 
     private void OnXenoHeadbuttHit(Entity<XenoHeadbuttComponent> xeno, ref ThrowDoHitEvent args)
