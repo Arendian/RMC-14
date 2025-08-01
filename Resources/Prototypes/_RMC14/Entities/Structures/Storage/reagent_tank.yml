@@ -59,6 +59,8 @@
       types:
         Blunt: 0
     throwRange: 2
+  - type: XenoToggleChargingDamage
+    destroy: true
 
 - type: entity
   parent: RMCTankReagentEmpty

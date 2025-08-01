@@ -25,6 +25,7 @@ using Content.Shared.Movement.Components;
 using Content.Shared.Movement.Events;
 using Content.Shared.Movement.Systems;
 using Content.Shared.Popups;
+using Content.Shared.Storage.EntitySystems;
 using Content.Shared.Stunnable;
 using Content.Shared.Throwing;
 using Robust.Shared.Audio.Systems;
@@ -47,6 +48,7 @@ public sealed class XenoChargeSystem : EntitySystem
     [Dependency] private readonly IConfigurationManager _config = default!;
     [Dependency] private readonly DamageableSystem _damageable = default!;
     [Dependency] private readonly SharedDoAfterSystem _doAfter = default!;
+    [Dependency] private readonly SharedEntityStorageSystem _entityStorage = default!;
     [Dependency] private readonly MobStateSystem _mobState = default!;
     [Dependency] private readonly MovementSpeedModifierSystem _movementSpeed = default!;
     [Dependency] private readonly SharedMoverController _moverController = default!;
@@ -150,7 +152,11 @@ public sealed class XenoChargeSystem : EntitySystem
             if (_net.IsClient)
                 _transform.DetachEntity(damage, Transform(damage));
             else
+            {
+                _entityStorage.EmptyContents(damage);
                 QueueDel(damage);
+            }
+
         }
         else
         {
