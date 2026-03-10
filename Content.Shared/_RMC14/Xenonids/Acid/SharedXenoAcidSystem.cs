@@ -12,6 +12,7 @@ using Content.Shared.Damage.Prototypes;
 using Content.Shared.DoAfter;
 using Content.Shared.Mobs.Systems;
 using Content.Shared.Popups;
+using Content.Shared.Stacks;
 using Content.Shared.Storage;
 using Content.Shared.Storage.EntitySystems;
 using Robust.Shared.Network;
@@ -52,6 +53,8 @@ public abstract class SharedXenoAcidSystem : EntitySystem
 
         SubscribeLocalEvent<InheritAcidComponent, AmmoShotEvent>(OnAmmoShot);
         SubscribeLocalEvent<InheritAcidComponent, GrenadeContentThrownEvent>(OnGrenadeContentThrown);
+
+        SubscribeLocalEvent<TimedCorrodingComponent, StackSplitEvent>(OnStackSplit);
 
         Subs.CVar(_config,
             RMCCVars.RMCCorrosiveAcidTickDelaySeconds,
@@ -191,6 +194,11 @@ public abstract class SharedXenoAcidSystem : EntitySystem
         {
             ApplyAcid(corroding.AcidPrototype, corroding.Strength, ent, corroding.Dps, corroding.LightDps, corroding.CorrodesAt, true);
         }
+    }
+
+    private void OnStackSplit(Entity<TimedCorrodingComponent> ent, ref StackSplitEvent args)
+    {
+        ApplyAcid(ent.Comp.AcidPrototype, ent.Comp.Strength, args.NewId, ent.Comp.Dps, ent.Comp.LightDps, ent.Comp.CorrodesAt, true);
     }
 
     private bool CheckCorrodiblePopupsWithReplacement(Entity<XenoAcidComponent> xeno, EntityUid target, XenoAcidStrength newStrength, out TimeSpan time, out float mult)
