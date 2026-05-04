@@ -87,34 +87,22 @@ public sealed partial class RMCPhotoCameraComponent : Component
     public EntityUid? AutoCenterAction;
 
     /// <summary>
-    ///     The temporary eye used by the camera.
-    /// </summary>
-    [DataField, AutoNetworkedField]
-    public NetEntity? Eye;
-
-    /// <summary>
     ///     The maximum distance at which the camera can capture a photo.
     /// </summary>
     [DataField, AutoNetworkedField]
     public float Range = 12f;
 
     /// <summary>
-    ///     Image data that will be stored in the printed photo entity's <see cref="RMCPhotoComponent"/>.
+    ///     The scene snapshot that will be stored in the printed photo entity's <see cref="RMCPhotoComponent"/>.
     /// </summary>
     [DataField]
-    public byte[]? ImageData;
+    public RMCPhotoSceneSnapshot? Snapshot;
 
     /// <summary>
     ///     The entities visible on the photo being printed.
     /// </summary>
     [DataField]
-    public List<EntityInPhoto> EntitiesInPhoto = new ();
-
-    /// <summary>
-    ///     The identifier of the user that rendered the photo.
-    /// </summary>
-    [DataField]
-    public Guid? ImageRenderedBy;
+    public List<EntityInPhoto> EntitiesInPhoto = new();
 
     /// <summary>
     ///     Prototype ID of the printed photo entity spawned from the camera.

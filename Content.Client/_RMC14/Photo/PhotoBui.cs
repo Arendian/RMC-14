@@ -50,6 +50,5 @@ public sealed partial class PhotoBui : BoundUserInterface
         }
 
         _window.SetName("Photo");
-        _photo.RequestPhoto(Owner);
     }
 }

@@ -1,87 +1,48 @@
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
+using System.Linq;
 using System.Numerics;
-using System.Threading.Tasks;
-using Content.Client._RMC14.NewPlayer;
 using Content.Client._RMC14.Photo;
 using Content.Shared._RMC14.Camera.PhotoCamera;
-using Content.Shared._RMC14.Marines;
-using Content.Shared._RMC14.Xenonids;
 using Content.Shared.Coordinates.Helpers;
-using Content.Shared.Hands.Components;
+using Content.Shared.Decals;
 using Content.Shared.Interaction;
 using Content.Shared.Popups;
+using Robust.Client.GameObjects;
 using Robust.Client.Graphics;
 using Robust.Client.Input;
+using Robust.Client.ResourceManagement;
+using Robust.Client.UserInterface;
 using Robust.Shared.Map;
-using Robust.Shared.Player;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using Robust.Shared.Prototypes;
+using Robust.Shared.Utility;
 
 namespace Content.Client._RMC14.Camera;
 
 public sealed class RMCPhotoCameraSystem : SharedRmcPhotoCameraSystem
 {
-    [Dependency] private readonly IClyde _clyde = default!;
-    [Dependency] private readonly EntityLookupSystem _entityLookup = default!;
     [Dependency] private readonly IEyeManager _eye = default!;
     [Dependency] private readonly IInputManager _inputManager = default!;
     [Dependency] private readonly SharedMapSystem _map = default!;
-    [Dependency] private readonly NewPlayerVisualizerSystem _newPlayerVisualizer = default!;
-    [Dependency] private readonly ISharedPlayerManager _player = default!;
-    [Dependency] private readonly SharedUserInterfaceSystem _uiSystem = default!;
+    [Dependency] private readonly IUserInterfaceManager _ui = default!;
 
-    private (IClydeViewport viewport, NetEntity camera, List<EntityInPhoto> entities)? _pendingCapture;
-    private bool _skipFrame;
+    private readonly PhotoRenderControl _control = new();
 
     public override void Initialize()
     {
         base.Initialize();
-        SubscribeNetworkEvent<TakePhotoEvent>(OnTakePhoto);
-        SubscribeNetworkEvent<ReceiveStoredPhotoEvent>(OnReceivedStoredPhoto);
         SubscribeNetworkEvent<ReceiveStoredPhotoDescriptionEvent>(OnReceivedStoredPhotoDescription);
 
         SubscribeLocalEvent<RMCPhotoCameraComponent, AfterInteractEvent>(OnAfterInteract);
-
         SubscribeLocalEvent<RMCPhotoComponent, ComponentStartup>(OnPhotoComponentStartup);
+        SubscribeLocalEvent<RMCCachedPhotoComponent, ComponentRemove>(OnCachedPhotoRemove);
+
+        _ui.RootControl.AddChild(_control);
     }
 
-    private void OnTakePhoto(TakePhotoEvent ev, EntitySessionEventArgs args)
+    public override void Shutdown()
     {
-        if (!TryComp(GetEntity(ev.Camera), out RMCPhotoCameraComponent? cameraComp))
-            return;
-
-        var eye = GetEntity(cameraComp.Eye);
-        if (!TryComp(eye, out EyeComponent? eyeComp))
-            return;
-
-        var photoCoordinates = TransformSystem.GetMoverCoordinates(eye.Value).Offset(eyeComp.Offset);
-
-        if (_player.LocalEntity is { } localEntity)
-        {
-            var takingPhoto = EnsureComp<RMCTakingPhotoComponent>(localEntity);
-            takingPhoto.PhotoCoordinates = photoCoordinates;
-            takingPhoto.ZoomMode = ev.ZoomMode;
-            takingPhoto.Offset = eyeComp.Offset;
-
-            _newPlayerVisualizer.UpdateAllAppearance();
-        }
-
-        TakePhoto((eye.Value, eyeComp), cameraComp.Resolution, ev.Camera, ev.Zoom, ev.ZoomMode, photoCoordinates);
-    }
-
-    private void OnReceivedStoredPhoto(ReceiveStoredPhotoEvent ev, EntitySessionEventArgs args)
-    {
-        var photo = GetEntity(ev.Photo);
-        if (!TryComp(photo, out RMCPhotoComponent? photoComp))
-            return;
-
-        photoComp.ImageData = ev.ImageData;
-
-        if (_uiSystem.TryGetOpenUi(photo, RMCPhotoUi.Key, out PhotoBui? bui))
-        {
-            bui.Refresh();
-        }
+        base.Shutdown();
+        _ui.RootControl.RemoveChild(_control);
     }
 
     private void OnReceivedStoredPhotoDescription(ReceiveStoredPhotoDescriptionEvent ev, EntitySessionEventArgs args)
@@ -114,9 +75,7 @@ public sealed class RMCPhotoCameraSystem : SharedRmcPhotoCameraSystem
 
         if (ent.Comp.RemainingCharges <= 0)
         {
-            if (_player.LocalEntity is { } localEntity)
-                Popup.PopupClient(Loc.GetString("rmc-photo-camera-make-photo-failed-empty", ("camera", ent)), localEntity, localEntity, PopupType.SmallCaution);
-
+            Popup.PopupClient(Loc.GetString("rmc-photo-camera-make-photo-failed-empty", ("camera", ent)), args.User, args.User, PopupType.SmallCaution);
             return;
         }
 
@@ -128,72 +87,12 @@ public sealed class RMCPhotoCameraSystem : SharedRmcPhotoCameraSystem
         RaiseNetworkEvent(new RequestStoredPhotoDescriptionEvent(GetNetEntity(ent)));
     }
 
-    private void TakePhoto(Entity<EyeComponent> eye, int resolution, NetEntity camera, Vector2 zoom, PhotoZoomMode zoomMode, EntityCoordinates photoCoordinates)
+    private void OnCachedPhotoRemove(Entity<RMCCachedPhotoComponent> ent, ref ComponentRemove args)
     {
-        EyeSystem.SetZoom(eye, zoom);
-
-        var size = new Vector2i(resolution, resolution);
-        var viewport = _clyde.CreateViewport(size);
-        viewport.AutomaticRender = true;
-        viewport.Eye = eye.Comp.Eye;
-
-        var photoArea = GetPhotoAreaRange(zoomMode);
-        var visibleEntities = GetVisibleEntities(eye, photoCoordinates, photoArea); // Doing this here instead of on the server so it's more accurate.
-
-        List<EntityInPhoto> entitiesInPhoto = new();
-        foreach (var entity in visibleEntities)
-        {
-            if (!TryComp(entity, out HandsComponent? hands))
-                continue;
-
-            var heldItems = new List<NetEntity>();
-            foreach (var hand in hands.Hands)
-            {
-                var heldItem = Hands.GetHeldItem((entity, hands), hand.Key);
-                if (heldItem == null)
-                    continue;
-
-                heldItems.Add(GetNetEntity(heldItem.Value));
-            }
-
-            entitiesInPhoto.Add(new EntityInPhoto(GetNetEntity(entity), heldItems));
-        }
-
-        _pendingCapture = (viewport, camera, entitiesInPhoto);
+        ent.Comp.RenderTarget?.Dispose();
     }
 
-    private HashSet<EntityUid> GetVisibleEntities(Entity<EyeComponent> eye, EntityCoordinates photoCoords, float range)
-    {
-        var visibleEntities = new HashSet<EntityUid>();
-        photoCoords.TryDistance(EntityManager, TransformSystem.GetMoverCoordinates(eye), out var cameraDistance);
-        var occludeRange = range + cameraDistance;
-
-        foreach (var marine in _entityLookup.GetEntitiesInRange<MarineComponent>(photoCoords, range, LookupFlags.Dynamic | LookupFlags.Uncontained))
-        {
-            if (!photoCoords.TryDistance(EntityManager, TransformSystem.GetMoverCoordinates(marine), out var distance) || distance > range)
-                continue;
-
-            if (!Examine.InRangeUnOccluded(eye, marine, occludeRange))
-                continue;
-
-            visibleEntities.Add(marine);
-        }
-
-        foreach (var xeno in _entityLookup.GetEntitiesInRange<XenoComponent>(photoCoords, range, LookupFlags.Dynamic | LookupFlags.Uncontained))
-        {
-            if (!photoCoords.TryDistance(EntityManager, TransformSystem.GetMoverCoordinates(xeno), out var distance) || distance > range)
-                continue;
-
-            if (!Examine.InRangeUnOccluded(eye, xeno, occludeRange))
-                continue;
-
-            visibleEntities.Add(xeno);
-        }
-
-        return visibleEntities;
-    }
-
-    public bool TryGetPhoto(EntityUid photo, [NotNullWhen(true)] out OwnedTexture? photoTexture, out string photoName)
+    public bool TryGetPhoto(EntityUid photo, [NotNullWhen(true)] out Texture? photoTexture, out string photoName)
     {
         photoName = "";
         photoTexture = null;
@@ -203,91 +102,190 @@ public sealed class RMCPhotoCameraSystem : SharedRmcPhotoCameraSystem
 
         photoName = photoComp.PhotoName;
 
-        if (TryComp(photo, out RMCCachedPhotoComponent? cachedPhoto))
+        if (TryComp(photo, out RMCCachedPhotoComponent? cached) && cached.CachedPhoto != null)
         {
-            photoTexture = cachedPhoto.CachedPhoto;
-            if (photoTexture != null)
-                return true;
+            photoTexture = cached.CachedPhoto;
+            return true;
         }
 
-        if (photoComp.ImageData == null)
-            return false;
+        if (photoComp.Snapshot != null && !HasComp<RMCCachedPhotoComponent>(photo))
+        {
+            EnsureComp<RMCCachedPhotoComponent>(photo);
+            _control.Queue.Enqueue((photo, photoComp.Snapshot));
+        }
 
-        using var ms = new MemoryStream(photoComp.ImageData);
-        photoTexture = _clyde.LoadTextureFromPNGStream(ms);
-
-        var cachedPhotoComp = EnsureComp<RMCCachedPhotoComponent>(photo);
-        cachedPhotoComp.CachedPhoto = photoTexture;
-
-        return true;
-    }
-
-    public void RequestPhoto(EntityUid photo)
-    {
-        if (!TryComp(photo, out RMCPhotoComponent? comp))
-            return;
-
-        if (comp.ImageData != null)
-            return;
-
-        RaiseNetworkEvent(new RequestStoredPhotoEvent(GetNetEntity(photo)));
+        return false;
     }
 
     public bool InPhotoRange(EntityUid uid)
     {
-        if (!TryComp(_player.LocalEntity, out RMCTakingPhotoComponent? takingPhoto))
-            return false;
-
-        if (takingPhoto.PhotoCoordinates is  not { } photoCoordinates)
-            return false;
-
-        var photoCaptureDistance = GetPhotoAreaRange(takingPhoto.ZoomMode) + 1.5f;
-        if (!photoCoordinates.TryDistance(EntityManager, TransformSystem.GetMoverCoordinates(uid), out var distance) || distance > photoCaptureDistance)
-            return false;
-
-        return true;
+        return false;
     }
 
-    public override void FrameUpdate(float frameTime)
+    private sealed class PhotoRenderControl : Control
     {
-        base.FrameUpdate(frameTime);
+        private const int LightSegments = 24;
+        private static readonly Color AmbientColor = new(0.6f, 0.6f, 0.6f, 1f);
+        private static readonly Color AmbientNoLightColor = new(0.75f, 0.75f, 0.75f, 1f);
 
-        if (_pendingCapture is not { } pending)
-            return;
+        [Dependency] private readonly IClyde _clyde = default!;
+        [Dependency] private readonly IEntityManager _entManager = default!;
+        [Dependency] private readonly IPrototypeManager _protoManager = default!;
+        [Dependency] private readonly IResourceCache _resourceCache = default!;
+        [Dependency] private readonly ITileDefinitionManager _tileDefManager = default!;
 
-        if (!_skipFrame)
+        private ShaderInstance? _addShader;
+        private ShaderInstance? _multiplyShader;
+        private RMCPhotoCameraSystem? _photoSystem;
+        private SpriteSystem? _spriteSystem;
+        private UserInterfaceSystem? _uiSystem;
+        private RMCPhotoCameraSystem PhotoSystem => _photoSystem ??= _entManager.System<RMCPhotoCameraSystem>();
+        private SpriteSystem SpriteSystem => _spriteSystem ??= _entManager.System<SpriteSystem>();
+        private UserInterfaceSystem UiSystem => _uiSystem ??= _entManager.System<UserInterfaceSystem>();
+
+        internal readonly Queue<(EntityUid Photo, RMCPhotoSceneSnapshot Snapshot)> Queue = new();
+
+        public PhotoRenderControl()
         {
-            _skipFrame = true;
-            return;
+            IoCManager.InjectDependencies(this);
         }
 
-        _skipFrame = false;
-        _pendingCapture = null;
+        private ShaderInstance AddShader => _addShader ??= _protoManager.Index<ShaderPrototype>("RMCPhotoLightAdd").Instance();
+        private ShaderInstance MultiplyShader => _multiplyShader ??= _protoManager.Index<ShaderPrototype>("RMCPhotoLightMultiply").Instance();
 
-        var (viewport, camera, entitiesInPhoto) = pending;
-
-        viewport.RenderTarget.CopyPixelsToMemory<Rgba32>(image =>
+        protected override void Draw(DrawingHandleScreen handle)
         {
-            var img = image.Clone();
+            base.Draw(handle);
 
-            Task.Run(() =>
-            {
-                using (img)
-                {
-                    using var output = new MemoryStream();
-                    img.SaveAsPng(output);
-
-                    RaiseNetworkEvent(new PhotoCaptureEvent(output.ToArray(), camera, entitiesInPhoto));
-                }
-            });
-
-            viewport.Dispose();
-
-            if (_player.LocalEntity is not { } localEntity)
+            if (!Queue.TryDequeue(out var job))
                 return;
 
-            RemComp<RMCTakingPhotoComponent>(localEntity);
-            _newPlayerVisualizer.UpdateAllAppearance();
-        });
+            var (photo, snapshot) = job;
+
+            if (!_entManager.EntityExists(photo))
+                return;
+
+            try
+            {
+                var size = new Vector2i(snapshot.Resolution, snapshot.Resolution);
+                var center = new Vector2(size.X / 2f, size.Y / 2f);
+                var pixelsPerUnit = 32f / snapshot.ZoomLevel;
+                var scale = new Vector2(1f / snapshot.ZoomLevel, 1f / snapshot.ZoomLevel);
+                var fullRect = new UIBox2(0, 0, size.X, size.Y);
+
+                var sceneTarget = _clyde.CreateRenderTarget(size, new RenderTargetFormatParameters(RenderTargetColorFormat.Rgba8Srgb), name: "rmc_photo_scene");
+                handle.RenderInRenderTarget(sceneTarget, () =>
+                {
+                    foreach (var tileSnap in snapshot.Tiles)
+                    {
+                        var tileDef = _tileDefManager[tileSnap.TypeId];
+                        if (tileDef.Sprite is not { } spritePath)
+                            continue;
+
+                        if (!_resourceCache.TryGetResource<TextureResource>(new ResPath(spritePath.ToString()), out var texRes))
+                            continue;
+
+                        var tex = texRes.Texture;
+                        var variants = tileDef.Variants < 1 ? 1 : (int)tileDef.Variants;
+                        var variantWidth = tex.Width / variants;
+                        var srcX = tileSnap.Variant % variants * variantWidth;
+                        var srcRegion = new UIBox2i(srcX, 0, srcX + variantWidth, tex.Height);
+
+                        var tileCenter = center + new Vector2(tileSnap.Offset.X, -tileSnap.Offset.Y) * pixelsPerUnit;
+                        var half = pixelsPerUnit / 2f;
+                        var destRect = new UIBox2(tileCenter.X - half, tileCenter.Y - half, tileCenter.X + half, tileCenter.Y + half);
+
+                        handle.DrawTextureRectRegion(tex, destRect, srcRegion);
+                    }
+
+                    foreach (var decalSnap in snapshot.Decals)
+                    {
+                        if (!_protoManager.TryIndex<DecalPrototype>(decalSnap.Id, out var decalProto))
+                            continue;
+
+                        var tex = SpriteSystem.Frame0(decalProto.Sprite);
+                        var decalCenter = center + new Vector2(decalSnap.Offset.X, -decalSnap.Offset.Y) * pixelsPerUnit;
+                        var half = pixelsPerUnit / 2f;
+                        var decalRect = new UIBox2(decalCenter.X - half, decalCenter.Y - half, decalCenter.X + half, decalCenter.Y + half);
+                        handle.DrawTextureRect(tex, decalRect, decalSnap.Color);
+                    }
+                }, Color.Transparent);
+
+                var entityTarget = _clyde.CreateRenderTarget(size, new RenderTargetFormatParameters(RenderTargetColorFormat.Rgba8Srgb), name: "rmc_photo_entities");
+                handle.RenderInRenderTarget(entityTarget, () =>
+                {
+                    var sorted = snapshot.Entities
+                        .Select(e => (Snap: e, Uid: _entManager.GetEntity(e.Entity)))
+                        .Where(e => _entManager.EntityExists(e.Uid))
+                        .OrderBy(e => _entManager.TryGetComponent<SpriteComponent>(e.Uid, out var sp) ? sp.DrawDepth : 0)
+                        .ToList();
+
+                    foreach (var (entSnap, entity) in sorted)
+                    {
+                        var pixelPos = center + new Vector2(entSnap.Offset.X, -entSnap.Offset.Y) * pixelsPerUnit;
+                        handle.DrawEntity(entity, pixelPos, scale, Angle.Zero, overrideDirection: entSnap.Direction);
+                    }
+                }, Color.Transparent);
+
+                var ambientColor = snapshot.Lights.Count > 0 ? AmbientColor : AmbientNoLightColor;
+                var lightTarget = _clyde.CreateRenderTarget(size, new RenderTargetFormatParameters(RenderTargetColorFormat.Rgba8Srgb), name: "rmc_photo_light");
+                handle.RenderInRenderTarget(lightTarget, () =>
+                {
+                    if (snapshot.Lights.Count > 0)
+                    {
+                        handle.UseShader(AddShader);
+                        foreach (var light in snapshot.Lights)
+                            DrawLightBlob(handle, center, pixelsPerUnit, light);
+                        handle.UseShader(null);
+                    }
+                }, ambientColor);
+
+                var finalTarget = _clyde.CreateRenderTarget(size, new RenderTargetFormatParameters(RenderTargetColorFormat.Rgba8Srgb), name: "rmc_photo");
+                handle.RenderInRenderTarget(finalTarget, () =>
+                {
+                    handle.DrawTextureRect(sceneTarget.Texture, fullRect);
+                    handle.DrawTextureRect(entityTarget.Texture, fullRect);
+                    handle.UseShader(MultiplyShader);
+                    handle.DrawTextureRect(lightTarget.Texture, fullRect);
+                    handle.UseShader(null);
+                }, Color.Transparent);
+
+                sceneTarget.Dispose();
+                entityTarget.Dispose();
+                lightTarget.Dispose();
+
+                var cached = _entManager.EnsureComponent<RMCCachedPhotoComponent>(photo);
+                cached.RenderTarget?.Dispose();
+                cached.RenderTarget = finalTarget;
+                cached.CachedPhoto = finalTarget.Texture;
+
+                if (UiSystem.TryGetOpenUi(photo, RMCPhotoUi.Key, out PhotoBui? bui))
+                    bui.Refresh();
+            }
+            catch (Exception ex)
+            {
+                PhotoSystem.Log.Error($"Failed to render photo snapshot: {ex}");
+            }
+        }
+
+        private static void DrawLightBlob(DrawingHandleScreen handle, Vector2 center, float pixelsPerUnit, RMCPhotoLightSnap light)
+        {
+            var lightCenter = center + new Vector2(light.Offset.X, -light.Offset.Y) * pixelsPerUnit;
+            var radiusPx = light.Radius * pixelsPerUnit;
+            var energy = Math.Clamp(light.Energy, 0f, 1f);
+            var centerColor = Color.FromSrgb(new Color(light.Color.R * energy, light.Color.G * energy, light.Color.B * energy, 1f));
+            var edgeColor = new Color(0f, 0f, 0f, 0f);
+
+            var verts = new DrawVertexUV2DColor[LightSegments + 2];
+            verts[0] = new DrawVertexUV2DColor(lightCenter, centerColor);
+            for (var i = 0; i <= LightSegments; i++)
+            {
+                var angle = i * (MathF.PI * 2f / LightSegments);
+                var pos = lightCenter + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * radiusPx;
+                verts[i + 1] = new DrawVertexUV2DColor(pos, edgeColor);
+            }
+
+            handle.DrawPrimitives(DrawPrimitiveTopology.TriangleFan, Texture.White, verts);
+        }
     }
 }
