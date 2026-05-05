@@ -92,7 +92,7 @@ jobs:
               owner,
               repo,
               issue_number: pr.number,
-              labels: [changesLabel],
+              labels: [commentedLabel],
             });
           }
 
