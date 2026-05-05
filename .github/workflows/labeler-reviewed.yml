@@ -24,7 +24,7 @@ jobs:
           const username = review.user.login;
 
           console.log(`state: ${state}`);
-          if (!["APPROVED", "CHANGES_REQUESTED", "DISMISSED", "COMMENTED"].includes(state)) {
+          if (!["approved", "changes_requested", "dismissed", "commented"].includes(state)) {
             console.log(`Not the right state`);
             return;
           }
@@ -35,7 +35,7 @@ jobs:
           const changesLabel = "S: Changes Requested";
           const commentedLabel = "S: Review Commented";
 
-          if (state !== "DISMISSED") {
+          if (state !== "dismissed") {
             const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
               owner,
               repo,
@@ -63,7 +63,7 @@ jobs:
             }
           }
 
-          if (state === "APPROVED") {
+          if (state === "approved") {
             await removeLabel(changesLabel);
 
             await github.rest.issues.addLabels({
@@ -73,7 +73,7 @@ jobs:
               labels: [approvedLabel],
             });
 
-          } else if (state === "CHANGES_REQUESTED") {
+          } else if (state === "changes_requested") {
             await removeLabel(approvedLabel);
 
             await github.rest.issues.addLabels({
@@ -83,11 +83,11 @@ jobs:
               labels: [changesLabel],
             });
 
-          } else if (state === "DISMISSED") {
+          } else if (state === "dismissed") {
             await removeLabel(approvedLabel);
             await removeLabel(changesLabel);
             await removeLabel(commentedLabel);
-          } else if (state === "COMMENTED"){
+          } else if (state === "commented"){
             await github.rest.issues.addLabels({
               owner,
               repo,
