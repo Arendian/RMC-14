@@ -23,6 +23,7 @@ jobs:
           const state = review.state;
           const username = review.user.login;
 
+          console.log(`state: ${state}`);
           if (!["APPROVED", "CHANGES_REQUESTED", "DISMISSED", "COMMENTED"].includes(state)) {
             console.log(`Not the right state`);
             return;
