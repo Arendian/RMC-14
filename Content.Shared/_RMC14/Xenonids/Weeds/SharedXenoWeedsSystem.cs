@@ -520,8 +520,7 @@ public abstract class SharedXenoWeedsSystem : EntitySystem
 
     public bool CanSpreadWeedsPopup(Entity<MapGridComponent> grid, Vector2 tile, EntityUid? user, EntityUid? spreadFrom, bool semiWeedable = false, bool source = false)
     {
-        var tileIndex = (Vector2i)tile;
-        if (!_mapSystem.TryGetTileRef(grid, grid, tileIndex, out var tileRef) ||
+        if (!_mapSystem.TryGetTileRef(grid, grid, tile, out var tileRef) ||
             !_tile.TryGetDefinition(tileRef.Tile.TypeId, out var tileDef) ||
             tileDef.ID == ContentTileDefinition.SpaceID ||
             tileDef is ContentTileDefinition { WeedsSpreadable: false } &&
@@ -532,18 +531,10 @@ public abstract class SharedXenoWeedsSystem : EntitySystem
             return false;
         }
 
-        if (!_area.CanResinPopup((grid, grid, null), tileIndex, user))
+        if (!_area.CanResinPopup((grid, grid, null), (Vector2i) tile, user))
             return false;
 
-        if (spreadFrom is { } spreadOrigin && !TerminatingOrDeleted(spreadOrigin))
-        {
-            var originPos = _transform.GetMoverCoordinates(spreadOrigin).Position;
-            var direction = (tile - originPos).Normalized();
-            if (_directionBlocker.IsDirectionBlocked(spreadOrigin, direction))
-                return false;
-        }
-
-        var targetTileAnchored = _mapSystem.GetAnchoredEntitiesEnumerator(grid, grid, tileIndex);
+        var targetTileAnchored = _mapSystem.GetAnchoredEntitiesEnumerator(grid, grid, (Vector2i) tile);
         while (targetTileAnchored.MoveNext(out var uid))
         {
             if (_blockWeedsQuery.HasComp(uid))
@@ -551,6 +542,23 @@ public abstract class SharedXenoWeedsSystem : EntitySystem
 
             if (source && HasComp<XenoResinHoleComponent>(uid))
                 return false;
+
+            if (spreadFrom is { } spreadOrigin && !TerminatingOrDeleted(spreadOrigin))
+            {
+                if (HasComp<BarricadeComponent>(uid) && _directionBlocker.IsFacingTarget(uid.Value, spreadOrigin))
+                    return false;
+            }
+        }
+
+        if (spreadFrom is { } spreadingFrom && !TerminatingOrDeleted(spreadingFrom))
+        {
+            var spreadingFromPosition = _transform.GetMoverCoordinates(spreadingFrom).SnapToGrid().Position;
+            var spreadingFromTileAnchored = _mapSystem.GetAnchoredEntitiesEnumerator(grid, grid, (Vector2i) spreadingFromPosition);
+            while (spreadingFromTileAnchored.MoveNext(out var uid))
+            {
+                if (HasComp<BarricadeComponent>(uid) && _directionBlocker.IsFacingTarget(uid.Value, tile))
+                    return false;
+            }
         }
 
         return true;

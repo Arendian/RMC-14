@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using Content.Shared._RMC14.Areas;
+using Content.Shared._RMC14.Barricade;
 using Content.Shared._RMC14.Entrenching;
 using Content.Shared._RMC14.CCVar;
 using Content.Shared._RMC14.Map;
@@ -64,6 +65,7 @@ public sealed class SharedXenoConstructionSystem : EntitySystem
     [Dependency] private readonly ISharedAdminLogManager _adminLogs = default!;
     [Dependency] private readonly IComponentFactory _compFactory = default!;
     [Dependency] private readonly DamageableSystem _damageable = default!;
+    [Dependency] private readonly SharedDirectionalAttackBlockSystem _directionBlocker = default!;
     [Dependency] private readonly SharedDoAfterSystem _doAfter = default!;
     [Dependency] private readonly SharedXenoHiveSystem _hive = default!;
     [Dependency] private readonly EntityLookupSystem _entityLookup = default!;
@@ -352,6 +354,9 @@ public sealed class SharedXenoConstructionSystem : EntitySystem
                 adjacentNodes.Add(adjacent);
 
                 if (!_xenoWeeds.CanSpreadWeedsPopup(grid, coordinates.Position, xeno, adjacent, false, true))
+                    continue;
+
+                if (_directionBlocker.IsDirectionBlocked(adjacent, direction.ToAtmosDirection().GetOpposite()))
                     continue;
 
                 canSpread = true;

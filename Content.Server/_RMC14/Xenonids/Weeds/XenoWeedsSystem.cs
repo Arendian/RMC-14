@@ -2,6 +2,7 @@ using System.Numerics;
 using Content.Server.Atmos.Components;
 using Content.Server.Spreader;
 using Content.Shared._RMC14.Communications;
+using Content.Shared._RMC14.Entrenching;
 using Content.Shared._RMC14.Map;
 using Content.Shared._RMC14.Xenonids.Construction.Nest;
 using Content.Shared._RMC14.Xenonids.Hive;
@@ -87,6 +88,20 @@ public sealed class XenoWeedsSystem : SharedXenoWeedsSystem
                 var blocked = false;
                 EntityUid? weedsToReplace = null;
                 var neighbor = indices.Offset(cardinal);
+                var anchoredOnOwnTile = _rmcMap.GetAnchoredEntitiesEnumerator(grid, indices);
+
+                while (anchoredOnOwnTile.MoveNext(out var anchoredOwnTileUid))
+                {
+                    if (HasComp<BarricadeComponent>(anchoredOwnTileUid) && _directionBlocker.IsFacingTarget(anchoredOwnTileUid, neighbor + new Vector2(0.5f, 0.5f)))
+                    {
+                        blocked = true;
+                        break;
+                    }
+                }
+
+                if (blocked)
+                    continue;
+
                 var anchored = _rmcMap.GetAnchoredEntitiesEnumerator(grid, neighbor);
                 while (anchored.MoveNext(out var anchoredId))
                 {
@@ -107,6 +122,12 @@ public sealed class XenoWeedsSystem : SharedXenoWeedsSystem
                         continue;
                     }
 
+                    if (HasComp<BarricadeComponent>(anchoredId) && _directionBlocker.IsFacingTarget(anchoredId, uid))
+                    {
+                        blocked = true;
+                        break;
+                    }
+
                     if (_xenoWeedsQuery.TryComp(anchoredId, out var otherWeeds))
                     {
                         if (otherWeeds.Level >= weeds.Level)
@@ -115,9 +136,6 @@ public sealed class XenoWeedsSystem : SharedXenoWeedsSystem
                             weedsToReplace = anchoredId;
                     }
                 }
-
-                if (_directionBlocker.IsDirectionBlocked(uid, cardinal, collisionGroup: CollisionGroup.BarricadeImpassable))
-                    blocked = true;
 
                 if (blocked)
                     continue;

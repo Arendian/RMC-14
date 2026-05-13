@@ -89,15 +89,27 @@ public abstract class SharedDirectionalAttackBlockSystem : EntitySystem
 
     private sbyte GetRelativeDiff(EntityUid blocker, EntityUid target, EntityCoordinates? originCoordinates = null)
     {
-        var targetCoordinates = originCoordinates ?? _transform.GetMoverCoordinates(target);
+        var targetPosition = (originCoordinates ?? _transform.GetMoverCoordinates(target)).Position;
 
+        return GetRelativeDiff(blocker, targetPosition);
+    }
+
+    private sbyte GetRelativeDiff(EntityUid blocker, Vector2 targetPosition)
+    {
         var blockerCoordinates = _transform.GetMoverCoordinateRotation(blocker, Transform(blocker));
-        var diff = targetCoordinates.Position - blockerCoordinates.Coords.Position;
+        var diff = targetPosition - blockerCoordinates.Coords.Position;
         var dir = diff.Normalized().GetDir();
         var blockerDirection = blockerCoordinates.worldRot.GetDir();
         var relativeDiff = Math.Abs(dir - blockerDirection);
 
         return relativeDiff;
+    }
+
+    public bool IsFacingTarget(EntityUid blocker, Vector2 targetPosition)
+    {
+        var relativeDiff = GetRelativeDiff(blocker, targetPosition);
+
+        return relativeDiff is 0 or 1 or 7;
     }
 
     /// <summary>
@@ -134,7 +146,7 @@ public abstract class SharedDirectionalAttackBlockSystem : EntitySystem
 
     public bool IsDirectionBlocked(EntityUid origin, AtmosDirection cardinal, float checkRange = 0.6f, CollisionGroup collisionGroup = CollisionGroup.BarricadeImpassable | CollisionGroup.BulletImpassable)
     {
-        return IsDirectionBlocked(origin, (Vector2)cardinal.CardinalToIntVec(), checkRange, collisionGroup);
+        return IsDirectionBlocked(origin, cardinal.CardinalToIntVec(), checkRange, collisionGroup);
     }
 
     public bool IsDirectionBlocked(EntityUid origin, Vector2 direction, float checkRange = 0.6f, CollisionGroup collisionGroup = CollisionGroup.BarricadeImpassable | CollisionGroup.BulletImpassable)
