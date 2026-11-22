@@ -10,6 +10,10 @@
     angle: 0
   - type: CMArmorPiercing
     amount: 20
+  - type: InteractedBlacklist
+    blacklist:
+      components:
+      - Xeno
 
 - type: entity
   parent: [ RMCBaseMeleeWeapon, BaseKnife, RMCAttachableBase ]
@@ -64,7 +68,7 @@
   - type: DeleteOnExplosion
   - type: Tool
     qualities:
-    - Cutting
+    - FenceCutting
     speedModifier: 0.8
     useSound:
       path: /Audio/Items/wirecutter.ogg
@@ -232,6 +236,7 @@
     malus: 0.225
   - type: Tag
     tags:
+    - Knife
     - ThrowingKnife
   - type: DeleteOnExplosion
 
@@ -302,7 +307,7 @@
     malus: 0.225
   - type: Tool
     qualities:
-    - Prying
+    - DoorPrying
   - type: Prying
     pryPowered: false
     speedModifier: 0.8

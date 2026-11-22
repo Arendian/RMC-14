@@ -169,35 +169,6 @@ public sealed class RequestPhotoCaptureEvent(NetCoordinates coordinates) : Entit
 }
 
 [Serializable, NetSerializable]
-public sealed class TakePhotoEvent(NetEntity camera, Vector2 zoom, PhotoZoomMode zoomMode) : EntityEventArgs
-{
-    public NetEntity Camera = camera;
-    public Vector2 Zoom = zoom;
-    public PhotoZoomMode ZoomMode = zoomMode;
-}
-
-[Serializable, NetSerializable]
-public sealed class PhotoCaptureEvent(byte[] imageData, NetEntity camera,  List<EntityInPhoto> entitiesInPhoto) : EntityEventArgs
-{
-    public byte[] ImageData = imageData;
-    public NetEntity Camera = camera;
-    public List<EntityInPhoto> EntitiesInPhoto = entitiesInPhoto;
-}
-
-[Serializable, NetSerializable]
-public sealed class RequestStoredPhotoEvent(NetEntity photo) : EntityEventArgs
-{
-    public NetEntity Photo = photo;
-}
-
-[Serializable, NetSerializable]
-public sealed class ReceiveStoredPhotoEvent(byte[] imageData, NetEntity photo) : EntityEventArgs
-{
-    public byte[] ImageData = imageData;
-    public NetEntity Photo = photo;
-}
-
-[Serializable, NetSerializable]
 public sealed class RequestStoredPhotoDescriptionEvent(NetEntity photo) : EntityEventArgs
 {
     public NetEntity Photo = photo;
@@ -212,3 +183,50 @@ public sealed class ReceiveStoredPhotoDescriptionEvent(NetEntity photo, List<str
 
 [Serializable, NetSerializable]
 public readonly record struct EntityInPhoto(NetEntity Entity, List<NetEntity> HeldItems);
+
+[Serializable, NetSerializable]
+public sealed class RMCPhotoEntitySnap(NetEntity entity, Vector2 offset, Direction direction)
+{
+    public NetEntity Entity = entity;
+    public Vector2 Offset = offset;
+    public Direction Direction = direction;
+}
+
+[Serializable, NetSerializable]
+public sealed class RMCPhotoTileSnap(Vector2 offset, int typeId, byte variant, byte rotationMirroring)
+{
+    public Vector2 Offset = offset;
+    public int TypeId = typeId;
+    public byte Variant = variant;
+    public byte RotationMirroring = rotationMirroring;
+}
+
+[Serializable, NetSerializable]
+public sealed class RMCPhotoLightSnap(Vector2 offset, float radius, float energy, Color color)
+{
+    public Vector2 Offset = offset;
+    public float Radius = radius;
+    public float Energy = energy;
+    public Color Color = color;
+}
+
+[Serializable, NetSerializable]
+public sealed class RMCPhotoDecalSnap(Vector2 offset, string id, Color? color, float angle)
+{
+    public Vector2 Offset = offset;
+    public string Id = id;
+    public Color? Color = color;
+    public float Angle = angle;
+}
+
+[Serializable, NetSerializable]
+public sealed class RMCPhotoSceneSnapshot(PhotoZoomMode zoomMode, float zoomLevel, int resolution)
+{
+    public PhotoZoomMode ZoomMode = zoomMode;
+    public float ZoomLevel = zoomLevel;
+    public int Resolution = resolution;
+    public List<RMCPhotoTileSnap> Tiles = new();
+    public List<RMCPhotoEntitySnap> Entities = new();
+    public List<RMCPhotoLightSnap> Lights = new();
+    public List<RMCPhotoDecalSnap> Decals = new();
+}

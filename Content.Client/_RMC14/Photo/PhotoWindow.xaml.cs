@@ -24,7 +24,7 @@ public sealed class PhotoWindow : DefaultWindow
         Contents.AddChild(_image);
     }
 
-    public void SetImage(OwnedTexture texture)
+    public void SetImage(Texture texture)
     {
         _image.Texture = texture;
 

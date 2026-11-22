@@ -18,7 +18,7 @@
   kind: source
   path: "/Textures/_RMC14/Shaders/night_vision.swsl"
   params:
-    nv_color: 0.1, 0.75, 0.1 
+    nv_color: 0.1, 0.75, 0.1
    # Green tint
 
 - type: shader
@@ -42,3 +42,25 @@
     light_boost: 4.0
     light_gamma: 1.0
     light_whitepoint: 1.0
+
+- type: shader
+  id: RMCMarineAnnouncementGrid
+  kind: source
+  path: "/Textures/_RMC14/Shaders/marine_announce_grid.swsl"
+  params:
+    tile_size: 3, 3
+    line_thickness: 0.5
+    grid_color: "#4A9EFF66"
+    scroll_speed: 12.0
+
+- type: shader
+  id: RMCPhotoLightAdd
+  kind: canvas
+  blend_mode: Add
+  light_mode: unshaded
+
+- type: shader
+  id: RMCPhotoLightMultiply
+  kind: canvas
+  blend_mode: Multiply
+  light_mode: unshaded

@@ -1,53 +1,43 @@
-using System.IO;
 using System.Linq;
 using System.Numerics;
-using Content.Server._RMC14.Mentor;
-using Content.Server.Administration.Managers;
-using Content.Server.Players.JobWhitelist;
-using Content.Shared._RMC14.Camera;
+using Content.Server.Decals;
 using Content.Shared._RMC14.Camera.PhotoCamera;
 using Content.Shared._RMC14.Hands;
 using Content.Shared.Coordinates.Helpers;
 using Content.Shared.Damage;
+using Content.Shared.Decals;
+using Content.Shared.Eye;
 using Content.Shared.Hands.Components;
 using Content.Shared.IdentityManagement;
+using Content.Shared.Light.Components;
+using Content.Shared.Maps;
 using Content.Shared.Mobs;
 using Content.Shared.Mobs.Components;
 using Content.Shared.Popups;
-using Content.Shared.Roles;
 using Robust.Server.Containers;
 using Robust.Server.GameObjects;
-using Robust.Server.Player;
-using Robust.Shared.Prototypes;
-using Robust.Shared.Spawners;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Png;
-using SixLabors.ImageSharp.PixelFormats;
+using Robust.Shared.Map;
+using Robust.Shared.Map.Components;
+using Robust.Shared.Physics.Components;
 
 namespace Content.Server._RMC14.Camera;
 
 public sealed class RMCPhotoCameraSystem : SharedRmcPhotoCameraSystem
 {
-    [Dependency] private readonly IAdminManager _adminManager = default!;
     [Dependency] private readonly ContainerSystem _container = default!;
-    [Dependency] private readonly JobWhitelistManager _jobWhitelist = default!;
-    [Dependency] private readonly MentorManager _mentorManager = default!;
-    [Dependency] private readonly IPlayerManager _playerManager = default!;
+    [Dependency] private readonly DecalSystem _decal = default!;
+    [Dependency] private readonly EntityLookupSystem _entityLookup = default!;
+    [Dependency] private readonly IMapManager _mapManager = default!;
+    [Dependency] private readonly SharedMapSystem _mapSystem = default!;
     [Dependency] private readonly RMCHandsSystem _rmcHands = default!;
-    [Dependency] private readonly ViewSubscriberSystem _viewSubscriber = default!;
+    [Dependency] private readonly TurfSystem _turf = default!;
 
-    private const int MaxSize = 256 * 1024; // 256 KB
-    private const float HurtThreshold = 0.25f;
-
-    private static readonly ProtoId<JobPrototype> CommandingOfficerJob = "CMCommandingOfficer";
-    private static readonly ProtoId<JobPrototype> ProvostInspectorJob = "CMProvostInspector";
+    private readonly HashSet<EntityUid> _generalResults = new();
 
     public override void Initialize()
     {
         base.Initialize();
         SubscribeNetworkEvent<RequestPhotoCaptureEvent>(OnRequestPhotoCapture);
-        SubscribeNetworkEvent<PhotoCaptureEvent>(OnPhotoCaptured);
-        SubscribeNetworkEvent<RequestStoredPhotoEvent>(OnRequestStoredPhoto);
         SubscribeNetworkEvent<RequestStoredPhotoDescriptionEvent>(OnRequestStoredPhotoDescription);
     }
 
@@ -68,135 +58,107 @@ public sealed class RMCPhotoCameraSystem : SharedRmcPhotoCameraSystem
             return;
         }
 
-        var coordinates = GetCoordinates(ev.Coordinates);
-        if (!coordinates.IsValid(EntityManager))
+        var targetCoords = GetCoordinates(ev.Coordinates);
+        if (!targetCoords.IsValid(EntityManager))
             return;
 
-        if (!Examine.InRangeUnOccluded(sessionEntity, coordinates, camera.Value.Comp.Range))
+        if (!Examine.InRangeUnOccluded(sessionEntity, targetCoords, camera.Value.Comp.Range))
             return;
 
-        var cameraCoordinates = TransformSystem.GetMoverCoordinates(sessionEntity);
+        var photoCoords = targetCoords;
         if (camera.Value.Comp.AutoCenter)
-            cameraCoordinates = cameraCoordinates.SnapToGrid();
+            photoCoords = photoCoords.SnapToGrid();
 
-        var eye = Spawn(null, cameraCoordinates);
+        var photoArea = GetPhotoAreaRange(camera.Value.Comp.ZoomMode);
+        var visibleEntities = GetVisibleEntities(photoCoords, photoArea);
 
-        camera.Value.Comp.Eye = GetNetEntity(eye);
-        Dirty(camera.Value);
+        var snapshot = new RMCPhotoSceneSnapshot(camera.Value.Comp.ZoomMode, camera.Value.Comp.ZoomLevel, camera.Value.Comp.Resolution);
+        var entityInPhotoList = new List<EntityInPhoto>();
 
-        var eyeComp = EnsureComp<EyeComponent>(eye);
-        EnsureComp<RMCStaticZoomLevelComponent>(eye);
-        var timedDespawn = EnsureComp<TimedDespawnComponent>(eye);  // In case the client fails to send an image to the server.
-        timedDespawn.Lifetime = 5;
-
-        var zoom = new Vector2(camera.Value.Comp.ZoomLevel, camera.Value.Comp.ZoomLevel);
-        EyeSystem.SetZoom(eye, zoom, eyeComp);
-        EyeSystem.SetDrawFov(eye, true, eyeComp);
-        EyeSystem.UpdateEye((eye, eyeComp));
-        EyeSystem.SetDrawLight(eye, true);
-
-        var offset = coordinates.Position - cameraCoordinates.Position;
-        EyeSystem.SetOffset(eye, offset, eyeComp);
-
-        var whiteListedSession = _adminManager.AllAdmins.FirstOrDefault();
-
-        if (whiteListedSession == null)
+        var photoMapCoords = TransformSystem.ToMapCoordinates(photoCoords);
+        if (_mapManager.TryFindGridAt(photoMapCoords, out var gridUid, out var mapGrid))
         {
-            foreach (var session in _playerManager.Sessions)
+            var tileAreaSize = photoArea * 2 + 2f;
+            var worldBox = Box2.CenteredAround(photoMapCoords.Position, new Vector2(tileAreaSize, tileAreaSize));
+            foreach (var tileRef in _mapSystem.GetTilesIntersecting(gridUid, mapGrid, worldBox, false))
             {
-                var isWhitelisted = _mentorManager.IsMentor(session.UserId) ||
-                                    _jobWhitelist.IsWhitelisted(session.UserId, CommandingOfficerJob) ||
-                                    _jobWhitelist.IsWhitelisted(session.UserId, ProvostInspectorJob);
-
-                if (!isWhitelisted)
+                if (tileRef.Tile.IsEmpty)
                     continue;
 
-                if (session.AttachedEntity == null) // Prioritize players that are in the lobby.
-                {
-                    whiteListedSession = session;
-                    break;
-                }
+                var tileCenterMap = TransformSystem.ToMapCoordinates(_turf.GetTileCenter(tileRef));
+                var offset = tileCenterMap.Position - photoMapCoords.Position;
+                snapshot.Tiles.Add(new RMCPhotoTileSnap(
+                    offset,
+                    tileRef.Tile.TypeId,
+                    tileRef.Tile.Variant,
+                    tileRef.Tile.RotationMirroring));
+            }
 
-                whiteListedSession ??= session;
+            var localPhotoCenter = _mapSystem.WorldToLocal(gridUid, mapGrid, photoMapCoords.Position);
+            var localBox = Box2.CenteredAround(localPhotoCenter, new Vector2(tileAreaSize, tileAreaSize));
+            foreach (var (_, decal) in _decal.GetDecalsIntersecting(gridUid, localBox))
+            {
+                var worldDecalPos = _mapSystem.LocalToWorld(gridUid, mapGrid, decal.Coordinates);
+                var decalOffset = worldDecalPos - photoMapCoords.Position;
+                snapshot.Decals.Add(new RMCPhotoDecalSnap(decalOffset, decal.Id, decal.Color, (float)decal.Angle));
             }
         }
 
-        if (whiteListedSession != null)
+        foreach (var entity in visibleEntities)
         {
-            _viewSubscriber.AddViewSubscriber(eye, whiteListedSession);
-            camera.Value.Comp.ImageRenderedBy = whiteListedSession.UserId;
+            var entCoords = TransformSystem.GetMoverCoordinates(entity);
+            var offset = entCoords.Position - photoCoords.Position;
+            var direction = TransformSystem.GetWorldRotation(entity).GetDir();
+            snapshot.Entities.Add(new RMCPhotoEntitySnap(GetNetEntity(entity), offset, direction));
 
-            var photoEv = new TakePhotoEvent(GetNetEntity(camera.Value), zoom, camera.Value.Comp.ZoomMode);
-            RaiseNetworkEvent(photoEv, whiteListedSession);
+            if (!HasComp<MobStateComponent>(entity))
+                continue;
 
-            return;
+            var heldItems = new List<NetEntity>();
+            if (TryComp(entity, out HandsComponent? hands))
+            {
+                foreach (var hand in hands.Hands)
+                {
+                    var heldItem = Hands.GetHeldItem((entity, hands), hand.Key);
+                    if (heldItem != null)
+                        heldItems.Add(GetNetEntity(heldItem.Value));
+                }
+            }
+
+            entityInPhotoList.Add(new EntityInPhoto(GetNetEntity(entity), heldItems));
         }
 
-        Popup.PopupEntity(Loc.GetString("rmc-photo-camera-make-photo-failed"), sessionEntity, sessionEntity, PopupType.SmallCaution);
-    }
-
-    private void OnPhotoCaptured(PhotoCaptureEvent ev, EntitySessionEventArgs args)
-    {
-        if (!_adminManager.IsAdmin(args.SenderSession, true) &&
-            !_mentorManager.IsMentor(args.SenderSession.UserId) &&
-            !_jobWhitelist.IsWhitelisted(args.SenderSession.UserId, CommandingOfficerJob) &&
-            !_jobWhitelist.IsWhitelisted(args.SenderSession.UserId, ProvostInspectorJob))
-            return;
-
-        var camera = GetEntity(ev.Camera);
-        if (!TryComp<RMCPhotoCameraComponent>(camera, out var cameraComp))
-            return;
-
-        var eyeEntity = GetEntity(cameraComp.Eye);
-        if (eyeEntity == null)
-            return;
-
-        _viewSubscriber.RemoveViewSubscriber(eyeEntity.Value, args.SenderSession);
-        QueueDel(eyeEntity);
-
-        cameraComp.Eye = null;
-        Dirty(camera, cameraComp);
-
-        if (ev.ImageData.Length > MaxSize)
-            return;
-
-        if (cameraComp.PhotoPrintedAt != null || cameraComp.ImageData != null)
-            return;
-
-        try
+        foreach (var entity in visibleEntities)
         {
-            using var input = new MemoryStream(ev.ImageData);
+            if (!TryComp(entity, out PointLightComponent? light))
+                continue;
 
-            var format = Image.DetectFormat(input);
-            if (!format.Equals(PngFormat.Instance))
-                return;
+            var isEnabled = light.Enabled;
+            var lightRadius = light.Radius;
+            if (!isEnabled && TryComp(entity, out ExpendableLightComponent? expLight) && expLight.Activated)
+            {
+                isEnabled = true;
+                if (lightRadius < 2f)
+                    lightRadius = 6f;
+            }
 
-            using var image = Image.Load<Rgba32>(input);
-            image.Metadata.ExifProfile = null;
-            image.Metadata.IccProfile = null;
+            if (!isEnabled && TryComp(entity, out HandheldLightComponent? handheld))
+                isEnabled = handheld.Activated;
 
-            using var output = new MemoryStream();
-            image.SaveAsPng(output);
+            if (!isEnabled)
+                continue;
 
-            cameraComp.PhotoPrintedAt = Timing.CurTime + cameraComp.PrintDelay;
-            cameraComp.ImageData = output.ToArray();
-            cameraComp.EntitiesInPhoto = ev.EntitiesInPhoto.ToList();
-            Dirty(camera, cameraComp);
-
-            Audio.PlayPvs(cameraComp.ShutterSound, camera);
+            var entMapCoords = TransformSystem.ToMapCoordinates(TransformSystem.GetMoverCoordinates(entity));
+            var lightOffset = entMapCoords.Position - photoMapCoords.Position + light.Offset;
+            snapshot.Lights.Add(new RMCPhotoLightSnap(lightOffset, lightRadius, light.Energy, light.Color));
         }
-        catch
-        {
-            // Failed to load the image
-        }
-    }
 
-    private void OnRequestStoredPhoto(RequestStoredPhotoEvent ev, EntitySessionEventArgs args)
-    {
-        if (!TryComp(GetEntity(ev.Photo), out RMCPhotoComponent? photo) || photo.ImageData == null)
-            return;
+        camera.Value.Comp.Snapshot = snapshot;
+        camera.Value.Comp.EntitiesInPhoto = entityInPhotoList;
+        camera.Value.Comp.PhotoPrintedAt = Timing.CurTime + camera.Value.Comp.PrintDelay;
+        Dirty(camera.Value);
 
-        RaiseNetworkEvent(new ReceiveStoredPhotoEvent(photo.ImageData, ev.Photo), args.SenderSession);
+        Audio.PlayPvs(camera.Value.Comp.ShutterSound, camera.Value);
     }
 
     private void OnRequestStoredPhotoDescription(RequestStoredPhotoDescriptionEvent ev, EntitySessionEventArgs args)
@@ -208,13 +170,12 @@ public sealed class RMCPhotoCameraSystem : SharedRmcPhotoCameraSystem
             return;
 
         var examineText = GetPhotoDescription(photo.EntitiesInPhoto, attachedEntity);
-
         RaiseNetworkEvent(new ReceiveStoredPhotoDescriptionEvent(ev.Photo, examineText), args.SenderSession);
     }
 
     private List<string> GetPhotoDescription(List<EntityInPhoto> entitiesInPhoto, EntityUid user)
     {
-        List<string> photoText = new();
+        var photoText = new List<string>();
         foreach (var entity in entitiesInPhoto)
         {
             var uid = GetEntity(entity.Entity);
@@ -249,14 +210,36 @@ public sealed class RMCPhotoCameraSystem : SharedRmcPhotoCameraSystem
             if (state != MobState.Dead)
                 continue;
 
-            if (damageable.TotalDamage < threshold * HurtThreshold)
-                continue;
-
-            text = Loc.GetString("rmc-photo-camera-entity-in-photo-entity-see-damaged", ("entity", uid), ("name", name));
-            break;
+            if (damageable.TotalDamage >= threshold)
+                return Loc.GetString("rmc-photo-camera-entity-in-photo-entity-dead", ("name", name));
         }
 
         return text;
+    }
+
+    private HashSet<EntityUid> GetVisibleEntities(EntityCoordinates photoCoords, float range)
+    {
+        var visible = new HashSet<EntityUid>();
+
+        _generalResults.Clear();
+        _entityLookup.GetEntitiesInRange(photoCoords, range, _generalResults, LookupFlags.Uncontained);
+
+        foreach (var entity in _generalResults)
+        {
+            if (!HasComp<PhysicsComponent>(entity) && Comp<TransformComponent>(entity).Anchored)
+                continue;
+
+            if (TryComp(entity, out VisibilityComponent? vis) &&
+                (vis.Layer & (ushort)VisibilityFlags.Normal) == 0)
+                continue;
+
+            if (!photoCoords.TryDistance(EntityManager, TransformSystem.GetMoverCoordinates(entity), out var dist) || dist > range)
+                continue;
+
+            visible.Add(entity);
+        }
+
+        return visible;
     }
 
     public override void Update(float frameTime)
@@ -272,22 +255,20 @@ public sealed class RMCPhotoCameraSystem : SharedRmcPhotoCameraSystem
             var photo = SpawnAtPosition(camera.PhotoPrototype, TransformSystem.GetMoverCoordinates(uid));
             var photoComp = EnsureComp<RMCPhotoComponent>(photo);
 
-            photoComp.ImageData = camera.ImageData;
-            photoComp.RenderedBy = camera.ImageRenderedBy;
+            photoComp.Snapshot = camera.Snapshot;
             photoComp.EntitiesInPhoto = camera.EntitiesInPhoto.ToList();
             Dirty(photo, photoComp);
 
             camera.PhotoPrintedAt = null;
-            camera.ImageData = null;
+            camera.Snapshot = null;
             camera.RemainingCharges -= 1;
-            camera.ImageRenderedBy = null;
             camera.EntitiesInPhoto.Clear();
             Dirty(uid, camera);
 
-            if (_container.TryGetContainingContainer(uid, out var container))
+            if (_container.TryGetContainingContainer(uid, out var container) &&
+                TryComp(container.Owner, out HandsComponent? hands))
             {
-                if (TryComp(container.Owner, out HandsComponent? hands))
-                    Hands.TryPickupAnyHand(container.Owner, photo, handsComp: hands);
+                Hands.TryPickupAnyHand(container.Owner, photo, handsComp: hands);
             }
         }
     }
