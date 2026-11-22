@@ -24,7 +24,7 @@
   name: unique civilian colonist preset
   categories: [ HideSpawnMenu ]
   components:
-  - type: SurvivorPreset
+  - type: EntityPreset
     randomOutfits:
     # Sleepy Colonist
     - [ RMCJumpsuitBluePjs, RMCShoesSlippers, RMCSatchelSleepyColonistFill ]
@@ -44,8 +44,8 @@
     - [ RMCJumpsuitOrangeEscapedPrisoner, CMSatchelSecurity, RMCShoesJackboots, RMCPouchGeneralLarge, WeaponShotgunM357Sawn ]
     # Stowaway
     - [ RMCHipsterGlasses, RMCSatchelStowawayFill, RMCJumpsuitLiaisonStowaway, RMCShoesBrown, RMCBriefcaseStowAway, RMCPouchGeneralLargeFillStowaway ]
-    # Private Detective (TODO: Tape recorder)
-    - [ RMCHeadCapFedoraTan, RMCJumpsuitLiaisonShoulderHolster, RMCCoatBureauTrenchCoatBeige, CMSatchel, RMCShoesLeather, RMCPhotoCamera ]
+    # Private Detective
+    - [ RMCHeadCapFedoraTan, RMCJumpsuitLiaisonShoulderHolster, RMCCoatBureauTrenchCoatBeige, CMSatchel, RMCShoesLeather, RMCUniversalRecorder, RMCPhotoCamera ]
     # Landing Pad Attendant
     - [ RMCJumpsuitCivilianYellow, RMCHeadCapFlippable, RMCSatchelNorm, CMBootsBlackFilled, CMPackFlare, RMCHazardVest, RMCBinoculars, RMCBeltUtilityGeneral, CMHandsBlackMarine, RMCEarmuffs ]
     # High roller
